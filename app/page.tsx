@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
@@ -50,14 +50,14 @@ import {
  * APEX Squad Single-File App (React + Tailwind + shadcn/ui)
  *
  * Features:
- * 1) Weekly scheduler (day-level): tap ✅ / ❓ / ❌ per player
+ * 1) Weekly scheduler (day-level): tap 鉁?/ 鉂?/ 鉂?per player
  * 2) Shared notepad (plus per-person tabs)
  * 3) Shared resources list (title + URL + type + description)
  *
  * New in this version:
  * - Editable team name
  * - Week picker anchored to the **selected** week (fixes label drift)
- * - Schedule uses labels (✅ / ❓ / ❌); default (unset) displays "?"
+ * - Schedule uses labels (鉁?/ 鉂?/ 鉂?; default (unset) displays "?"
  *
  * Data persistence: localStorage (Export/Import JSON to sync between friends).
  */
@@ -128,7 +128,7 @@ function classNames(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
 }
 
-// Heat color for team YES (✅) count (0..3)
+// Heat color for team YES (鉁? count (0..3)
 export function colorForCount(n: number) {
   if (n >= 3) return "bg-emerald-500 text-white";
   if (n === 2) return "bg-emerald-300 text-emerald-900";
@@ -173,12 +173,11 @@ function useLocalState<T>(defaultValue: T): [T, React.Dispatch<React.SetStateAct
 
 type Player = typeof PLAYERS[number];
 
-type DayStatus = "YES" | "TBD" | "NO"; // underlying value; UI uses ✅ / ❓ / ❌
-
+type DayStatus = "YES" | "TBD" | "NO"; // underlying value; UI uses 鉁?/ 鉂?/ 鉂?
 const STATUS_LABEL: Record<DayStatus, string> = {
-  YES: "✅",
-  TBD: "❓", // explicit TBD shows a question mark bubble
-  NO: "❌",
+  YES: "鉁?,
+  TBD: "鉂?, // explicit TBD shows a question mark bubble
+  NO: "鉂?,
 };
 
 const STATUS_TEXT_CLASS: Record<DayStatus, string> = {
@@ -232,7 +231,7 @@ function Header({ data, setData, weekStart, setWeekStart }: { data: AppData; set
             className="text-2xl font-bold bg-transparent border-0 p-0 h-auto focus-visible:ring-0 focus-visible:outline-none"
             placeholder="Team name"
           />
-          <p className="text-sm text-muted-foreground">Scheduling • Notes • Resources</p>
+          <p className="text-sm text-muted-foreground">Scheduling 鈥?Notes 鈥?Resources</p>
         </div>
       </div>
       <div className="flex items-center gap-3">
@@ -300,7 +299,7 @@ function DataIO({ data, setData }: { data: AppData; setData: React.Dispatch<Reac
       try {
         const json = JSON.parse(String(reader.result)) as AppData;
         setData(json);
-      } catch (e) {
+      } catch {
         alert("Invalid JSON file.");
       }
     };
@@ -377,7 +376,7 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <CalendarDays className="h-5 w-5" /> Weekly Availability (tap <span className="mx-1">✅ / ❓ / ❌</span> for <strong className="ml-1">{active}</strong>)
+          <CalendarDays className="h-5 w-5" /> Weekly Availability (tap <span className="mx-1">鉁?/ 鉂?/ 鉂?/span> for <strong className="ml-1">{active}</strong>)
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -396,14 +395,14 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
             </TableHeader>
             <TableBody>
               <TableRow>
-                <TableCell className="font-medium">Team ✅</TableCell>
+                <TableCell className="font-medium">Team 鉁?/TableCell>
                 {dates.map((d) => {
                   const k = dayKey(d);
                   const n = countsYes[k] || 0;
                   return (
                     <TableCell key={k} className="p-2">
                       <div className={classNames("rounded-md px-2 py-1 text-xs border", colorForCount(n))}>
-                        {n}/3 ✅ {n === 3 ? "★" : ""}
+                        {n}/3 鉁?{n === 3 ? "鈽? : ""}
                       </div>
                       <div className="mt-1 flex items-center justify-center gap-2 text-[12px]">
                         {PLAYERS.map((p) => {
@@ -442,9 +441,9 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
                   return (
                     <TableCell key={k} className="p-2">
                       <div className="inline-flex items-center gap-1 border rounded-md p-1">
-                        <Opt value="YES">✅</Opt>
-                        <Opt value="TBD">❓</Opt>
-                        <Opt value="NO">❌</Opt>
+                        <Opt value="YES">鉁?/Opt>
+                        <Opt value="TBD">鉂?/Opt>
+                        <Opt value="NO">鉂?/Opt>
                       </div>
                     </TableCell>
                   );
@@ -454,9 +453,9 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
           </Table>
         </div>
         <div className="mt-3 flex items-center gap-4 text-sm text-muted-foreground">
-          <div className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded bg-emerald-500" /> ✅</div>
-          <div className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded bg-amber-400" /> ❓</div>
-          <div className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded bg-slate-300" /> ❌</div>
+          <div className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded bg-emerald-500" /> 鉁?/div>
+          <div className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded bg-amber-400" /> 鉂?/div>
+          <div className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded bg-slate-300" /> 鉂?/div>
         </div>
       </CardContent>
     </Card>
@@ -475,7 +474,7 @@ function Notepad({ data, setData }: { data: AppData; setData: React.Dispatch<Rea
         <CardTitle className="flex items-center gap-2"><NotebookPen className="h-5 w-5" /> Squad Notepad</CardTitle>
       </CardHeader>
       <CardContent>
-        <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
+        <Tabs value={tab} onValueChange={(v) => setTab(v as "shared" | Player)}>
           <TabsList>
             <TabsTrigger value="shared">Shared</TabsTrigger>
             {PLAYERS.map((p) => (
@@ -516,7 +515,7 @@ function ResourceForm({ onAdd }: { onAdd: (r: { id: string; title: string; url: 
       setUrl("");
       setType("Video");
       setDesc("");
-    } catch (e) {
+    } catch {
       alert("Invalid URL");
     }
   };
@@ -587,7 +586,7 @@ function Resources({ data, setData }: { data: AppData; setData: React.Dispatch<R
             </motion.div>
           ))}
           {data.resources.length === 0 && (
-            <div className="text-sm text-muted-foreground">No resources yet — add your first above!</div>
+            <div className="text-sm text-muted-foreground">No resources yet 鈥?add your first above!</div>
           )}
         </div>
       </CardContent>
@@ -613,7 +612,7 @@ export default function ApexSquadApp() {
       <footer className="pt-4 text-xs text-muted-foreground">
         <p>
           Data is stored locally in your browser. Use Export/Import (top right) to sync with friends.
-          Scheduling shows <strong>the selected week (Monday start)</strong>; tap <strong>✅ / ❓ / ❌</strong> for each day. Use the week picker (anchored to the current selection) or the arrows to move week-by-week.
+          Scheduling shows <strong>the selected week (Monday start)</strong>; tap <strong>鉁?/ 鉂?/ 鉂?/strong> for each day. Use the week picker (anchored to the current selection) or the arrows to move week-by-week.
         </p>
       </footer>
     </div>
@@ -650,8 +649,9 @@ export default function ApexSquadApp() {
     console.assert(win[0].getDate() === 29 && win[0].getMonth() === 8, "window[0] should equal selected start (Sep 29)");
     console.assert(win[1].getDate() === 6 && win[1].getMonth() === 9, "window[1] should be Oct 6");
 
-  } catch (e) {
+  } catch {
     // Never throw in production; just log. These are smoke tests.
     console.warn("App tests encountered an error:", e);
   }
 })();
+
