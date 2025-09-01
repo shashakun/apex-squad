@@ -650,9 +650,8 @@ export default function ApexSquadApp() {
     console.assert(win[0].getDate() === 29 && win[0].getMonth() === 8, "window[0] should equal selected start (Sep 29)");
     console.assert(win[1].getDate() === 6 && win[1].getMonth() === 9, "window[1] should be Oct 6");
 
-  } catch {
+  } catch (err) {
     // Never throw in production; just log. These are smoke tests.
-    console.warn("App tests encountered an error:", e);
+    console.warn("App tests encountered an error:", err);
   }
 })();
-
