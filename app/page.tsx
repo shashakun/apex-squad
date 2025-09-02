@@ -77,7 +77,13 @@ export const supabase = SUPABASE_URL && SUPABASE_ANON_KEY
   : null;
 
 // Key-value doc helpers in Supabase
-async function getDoc(key: string): Promise<any | null> {
+// Strong types to avoid `any`
+type WeekDoc = Record<Player, Record<string, DayStatus>>;
+type NotesDoc = { content: string };
+type TeamNameDoc = { name: string };
+type ResourcesDoc = Array<{ id: string; title: string; url: string; type: string; desc?: string }>;
+
+async function getDoc<T>(key: string): Promise<T | null> {
   if (!supabase) return null;
   const { data, error } = await supabase
     .from("apex_docs")
@@ -86,63 +92,12 @@ async function getDoc(key: string): Promise<any | null> {
     .eq("key", key)
     .maybeSingle();
   if (error) return null;
-  return data?.value ?? null;
+  return (data?.value as T) ?? null;
 }
 
-async function upsertDoc(key: string, value: any): Promise<void> {
+async function upsertDoc<T>(key: string, value: T): Promise<void> {
   if (!supabase) return;
   await supabase.from("apex_docs").upsert({ team_code: TEAM_CODE, key, value });
-}
-
-// === Utils ===
-function startOfWeek(date = new Date()): Date {
-  // Monday start
-  const d = new Date(date);
-  const day = (d.getDay() + 6) % 7; // 0=Mon ... 6=Sun
-  const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - day);
-  monday.setHours(0, 0, 0, 0);
-  return monday;
-}
-
-function startOfNextWeek(date = new Date()): Date {
-  const monday = startOfWeek(date);
-  const nextMonday = new Date(monday);
-  nextMonday.setDate(monday.getDate() + 7);
-  return nextMonday;
-}
-
-function getWeeksFrom(start: Date, count = 4): Date[] {
-  const base = startOfWeek(start);
-  return Array.from({ length: count }, (_, i) => {
-    const d = new Date(base);
-    d.setDate(base.getDate() + i * 7);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  });
-}
-
-function formatDate(d: Date): string {
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-function weekdayLabel(d: Date): string {
-  return d.toLocaleDateString(undefined, { weekday: "short" });
-}
-
-function getWeekDates(weekStart: Date): Date[] {
-  return Array.from({ length: 7 }, (_, i) => {
-    const nd = new Date(weekStart);
-    nd.setDate(weekStart.getDate() + i);
-    return nd;
-  });
-}
-
-function weekKey(weekStart: Date): string {
-  return `${weekStart.getFullYear()}-${String(weekStart.getMonth() + 1).padStart(2, "0")}-${String(weekStart.getDate()).padStart(2, "0")}`;
-}
-
-function classNames(...xs: Array<string | false | null | undefined>) {
-  return xs.filter(Boolean).join(" ");
 }
 
 // Heat color for team YES count (0..3)
@@ -396,9 +351,9 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
     if (!supabase) return;
     const channel = supabase
       .channel('apex_docs_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'apex_docs', filter: `team_code=eq.${TEAM_CODE}` }, (payload: any) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'apex_docs', filter: `team_code=eq.${TEAM_CODE}` }, (payload: { new: { key: string; value: unknown } }) => {
         const row = payload.new as { key: string; value: any };
-        if (row?.key === `schedule:${wk}`) setData((s) => ({ ...s, scheduleDays: { ...s.scheduleDays, [wk]: row.value as any } }));
+        if (row?.key === `schedule:${wk}`) setData((s) => ({ ...s, scheduleDays: { ...s.scheduleDays, [wk]: row.value as WeekDoc } }));
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -408,7 +363,7 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
   useEffect(() => {
     (async () => {
       const cloud = await getDoc(`schedule:${wk}`);
-      if (cloud) setData((s) => ({ ...s, scheduleDays: { ...s.scheduleDays, [wk]: cloud as any } }));
+      if (cloud) setData((s) => ({ ...s, scheduleDays: { ...s.scheduleDays, [wk]: cloud as WeekDoc } }));
     })();
   }, [wk, setData]);
 
@@ -533,7 +488,7 @@ function Notepad({ data, setData }: { data: AppData; setData: React.Dispatch<Rea
     if (!supabase) return;
     const channel = supabase
       .channel('apex_notes_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'apex_docs', filter: `team_code=eq.${TEAM_CODE}` }, (payload: any) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'apex_docs', filter: `team_code=eq.${TEAM_CODE}` }, (payload: { new: { key: string; value: unknown } }) => {
         const row = payload.new as { key: string; value: any };
         if (!row) return;
         if (row.key === 'notes:shared') setData((s) => ({ ...s, notes: { ...s.notes, shared: row.value?.content || '' } }));
@@ -651,9 +606,9 @@ function Resources({ data, setData }: { data: AppData; setData: React.Dispatch<R
     if (!supabase) return;
     const channel = supabase
       .channel('apex_resources_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'apex_docs', filter: `team_code=eq.${TEAM_CODE}` }, (payload: any) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'apex_docs', filter: `team_code=eq.${TEAM_CODE}` }, (payload: { new: { key: string; value: unknown } }) => {
         const row = payload.new as { key: string; value: any };
-        if (row?.key === 'resources') setData((s) => ({ ...s, resources: (row.value || []) as any }));
+        if (row?.key === 'resources') setData((s) => ({ ...s, resources: (row.value || []) as ResourcesDoc }));
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -662,7 +617,7 @@ function Resources({ data, setData }: { data: AppData; setData: React.Dispatch<R
   useEffect(() => {
     (async () => {
       const res = await getDoc('resources');
-      if (res) setData((s) => ({ ...s, resources: res as any }));
+      if (res) setData((s) => ({ ...s, resources: res as ResourcesDoc }));
     })();
   }, [setData]);
 
