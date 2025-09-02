@@ -202,7 +202,7 @@ function Header({ data, setData, weekStart, setWeekStart }: { data: AppData; set
 
   useEffect(() => {
     (async () => {
-      const nm = await getDoc('team:name');
+      const nm = await getDoc<TeamNameDoc>('team:name');
       if (nm?.name) setData((s) => ({ ...s, teamName: nm.name }));
     })();
   }, [setData]);
@@ -352,7 +352,7 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
     const channel = supabase
       .channel('apex_docs_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'apex_docs', filter: `team_code=eq.${TEAM_CODE}` }, (payload: { new: { key: string; value: unknown } }) => {
-        const row = payload.new as { key: string; value: any };
+        const row = payload.new as { key: string; value: unknown };
         if (row?.key === `schedule:${wk}`) setData((s) => ({ ...s, scheduleDays: { ...s.scheduleDays, [wk]: row.value as WeekDoc } }));
       })
       .subscribe();
@@ -362,7 +362,7 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
   // Load current week from cloud on mount/week change
   useEffect(() => {
     (async () => {
-      const cloud = await getDoc(`schedule:${wk}`);
+      const cloud = await getDoc<WeekDoc>(`schedule:${wk}`);
       if (cloud) setData((s) => ({ ...s, scheduleDays: { ...s.scheduleDays, [wk]: cloud as WeekDoc } }));
     })();
   }, [wk, setData]);
@@ -489,7 +489,7 @@ function Notepad({ data, setData }: { data: AppData; setData: React.Dispatch<Rea
     const channel = supabase
       .channel('apex_notes_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'apex_docs', filter: `team_code=eq.${TEAM_CODE}` }, (payload: { new: { key: string; value: unknown } }) => {
-        const row = payload.new as { key: string; value: any };
+        const row = payload.new as { key: string; value: unknown };
         if (!row) return;
         if (row.key === 'notes:shared') setData((s) => ({ ...s, notes: { ...s.notes, shared: row.value?.content || '' } }));
         for (const p of PLAYERS) if (row.key === `notes:${p}`) setData((s) => ({ ...s, notes: { ...s.notes, [p]: row.value?.content || '' } }));
@@ -502,10 +502,10 @@ function Notepad({ data, setData }: { data: AppData; setData: React.Dispatch<Rea
   // initial load of notes
   useEffect(() => {
     (async () => {
-      const shared = await getDoc('notes:shared');
+      const shared = await getDoc<NotesDoc>('notes:shared');
       if (shared) setData((s) => ({ ...s, notes: { ...s.notes, shared: shared.content || '' } }));
       for (const p of PLAYERS) {
-        const n = await getDoc(`notes:${p}`);
+        const n = await getDoc<NotesDoc>(`notes:${p}`);
         if (n) setData((s) => ({ ...s, notes: { ...s.notes, [p]: n.content || '' } }));
       }
     })();
@@ -607,7 +607,7 @@ function Resources({ data, setData }: { data: AppData; setData: React.Dispatch<R
     const channel = supabase
       .channel('apex_resources_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'apex_docs', filter: `team_code=eq.${TEAM_CODE}` }, (payload: { new: { key: string; value: unknown } }) => {
-        const row = payload.new as { key: string; value: any };
+        const row = payload.new as { key: string; value: unknown };
         if (row?.key === 'resources') setData((s) => ({ ...s, resources: (row.value || []) as ResourcesDoc }));
       })
       .subscribe();
@@ -616,7 +616,7 @@ function Resources({ data, setData }: { data: AppData; setData: React.Dispatch<R
 
   useEffect(() => {
     (async () => {
-      const res = await getDoc('resources');
+      const res = await getDoc<ResourcesDoc>('resources');
       if (res) setData((s) => ({ ...s, resources: res as ResourcesDoc }));
     })();
   }, [setData]);
