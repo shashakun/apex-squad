@@ -52,17 +52,12 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
  * APEX Squad Single-File App (React + Tailwind + shadcn/ui)
  *
  * Features:
- * 1) Weekly scheduler (day-level): tap \u2705 / \u2753 / \u274C per player
+ * 1) Weekly scheduler (day-level): tap ✅ / ❓ / ❌ per player
  * 2) Shared notepad (plus per-person tabs)
  * 3) Shared resources list (title + URL + type + description)
  *
- * New in this version:
- * - Editable team name
- * - Week picker anchored to the selected week (fixes label drift)
- * - **Cloud sync via Supabase** (schedule, notes, resources, team name) — realtime for everyone with the same TEAM_CODE
- * - Still supports Export/Import as a backup
- *
- * Data persistence: Supabase (primary) with optional local cache fallback.
+ * Cloud sync via Supabase (schedule, notes, resources, team name) — realtime for everyone with the same TEAM_CODE
+ * Still supports Export/Import as a backup.
  */
 
 // === Config ===
@@ -73,33 +68,10 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL as string | undefined;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string | undefined;
 export const TEAM_CODE = (process.env.NEXT_PUBLIC_TEAM_CODE as string) || "apex-squad-demo";
 
-export const supabase: SupabaseClient | null = SUPABASE_URL && SUPABASE_ANON_KEY
-  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false } })
-  : null;
-
-// Key-value doc helpers in Supabase
-// Strong types to avoid `any`
-type WeekDoc = Record<Player, Record<string, DayStatus>>;
-type NotesDoc = { content: string };
-type TeamNameDoc = { name: string };
-type ResourcesDoc = Array<{ id: string; title: string; url: string; type: string; desc?: string }>;
-
-async function getDoc<T>(key: string): Promise<T | null> {
-  if (!supabase) return null;
-  const { data, error } = await supabase
-    .from("apex_docs")
-    .select("value")
-    .eq("team_code", TEAM_CODE)
-    .eq("key", key)
-    .maybeSingle();
-  if (error) return null;
-  return (data?.value as T) ?? null;
-}
-
-async function upsertDoc<T>(key: string, value: T): Promise<void> {
-  if (!supabase) return;
-  await supabase.from("apex_docs").upsert({ team_code: TEAM_CODE, key, value });
-}
+export const supabase: SupabaseClient | null =
+  SUPABASE_URL && SUPABASE_ANON_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false } })
+    : null;
 
 // === Utils ===
 function classNames(...xs: Array<string | false | null | undefined>) {
@@ -189,13 +161,14 @@ function useLocalState<T>(defaultValue: T): [T, React.Dispatch<React.SetStateAct
     }
   });
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch {}
   }, [state]);
   return [state, setState];
 }
 
 // === Data model ===
-
 type Player = typeof PLAYERS[number];
 
 type DayStatus = "YES" | "TBD" | "NO"; // underlying value; UI uses check / question / cross
@@ -232,8 +205,50 @@ const initialData: AppData = {
   resources: [],
 };
 
+// Key-value doc helpers in Supabase
+// Strong types to avoid `any`
+type WeekDoc = Record<Player, Record<string, DayStatus>>;
+type NotesDoc = { content: string };
+type TeamNameDoc = { name: string };
+type ResourcesDoc = Array<{ id: string; title: string; url: string; type: string; desc?: string }>;
+
+async function getDoc<T>(key: string): Promise<T | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("apex_docs")
+    .select("value")
+    .eq("team_code", TEAM_CODE)
+    .eq("key", key)
+    .maybeSingle();
+  if (error) return null;
+  return (data?.value as T) ?? null;
+}
+
+async function upsertDoc<T>(key: string, value: T): Promise<void> {
+  if (!supabase) return;
+  await supabase.from("apex_docs").upsert({ team_code: TEAM_CODE, key, value });
+}
+
+// Narrowing helper for realtime payloads
+type KVRow = { key: string; value: unknown };
+function isKVRow(v: unknown): v is KVRow {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return "key" in o && "value" in o;
+}
+
 // === Header ===
-function Header({ data, setData, weekStart, setWeekStart }: { data: AppData; setData: React.Dispatch<React.SetStateAction<AppData>>; weekStart: Date; setWeekStart: (d: Date) => void; }) {
+function Header({
+  data,
+  setData,
+  weekStart,
+  setWeekStart,
+}: {
+  data: AppData;
+  setData: React.Dispatch<React.SetStateAction<AppData>>;
+  weekStart: Date;
+  setWeekStart: (d: Date) => void;
+}) {
   const wk = weekKey(weekStart);
   const windowWeeks = getWeeksFrom(weekStart, 4); // anchored to selected week
   const nameDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -249,13 +264,13 @@ function Header({ data, setData, weekStart, setWeekStart }: { data: AppData; set
     setData((s) => ({ ...s, teamName: val }));
     if (nameDebounce.current) clearTimeout(nameDebounce.current);
     nameDebounce.current = setTimeout(() => {
-      upsertDoc<TeamNameDoc>('team:name', { name: val }).catch(() => {});
+      upsertDoc<TeamNameDoc>("team:name", { name: val }).catch(() => {});
     }, 400);
   };
 
   useEffect(() => {
     (async () => {
-      const nm = await getDoc<TeamNameDoc>('team:name');
+      const nm = await getDoc<TeamNameDoc>("team:name");
       if (nm?.name) setData((s) => ({ ...s, teamName: nm.name }));
     })();
   }, [setData]);
@@ -272,23 +287,34 @@ function Header({ data, setData, weekStart, setWeekStart }: { data: AppData; set
             className="text-2xl font-bold bg-transparent border-0 p-0 h-auto focus-visible:ring-0 focus-visible:outline-none"
             placeholder="Team name"
           />
-          <p className="text-xs text-muted-foreground">Team code: <span className="font-mono">{TEAM_CODE}</span> • Week of {formatDate(weekStart)} <Badge variant="secondary" className="ml-1">{wk}</Badge></p>
+          <p className="text-xs text-muted-foreground">
+            Team code: <span className="font-mono">{TEAM_CODE}</span> • Week of {formatDate(weekStart)}{" "}
+            <Badge variant="secondary" className="ml-1">
+              {wk}
+            </Badge>
+          </p>
         </div>
       </div>
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => shiftWeek(-1)} title="Previous week"><ChevronLeft className="h-4 w-4" /></Button>
+          <Button variant="outline" size="sm" onClick={() => shiftWeek(-1)} title="Previous week">
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
           <Select value={"0"} onValueChange={(v) => setWeekStart(windowWeeks[Number(v)] || windowWeeks[0])}>
             <SelectTrigger className="w-[140px]">
               <SelectValue placeholder="Pick week" />
             </SelectTrigger>
             <SelectContent>
               {windowWeeks.map((d, i) => (
-                <SelectItem key={d.toISOString()} value={String(i)}>{formatDate(d)}</SelectItem>
+                <SelectItem key={d.toISOString()} value={String(i)}>
+                  {formatDate(d)}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
-          <Button variant="outline" size="sm" onClick={() => shiftWeek(1)} title="Next week"><ChevronRight className="h-4 w-4" /></Button>
+          <Button variant="outline" size="sm" onClick={() => shiftWeek(1)} title="Next week">
+            <ChevronRight className="h-4 w-4" />
+          </Button>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">I am</span>
@@ -315,7 +341,13 @@ function Header({ data, setData, weekStart, setWeekStart }: { data: AppData; set
 }
 
 // === Export / Import ===
-function DataIO({ data, setData }: { data: AppData; setData: React.Dispatch<React.SetStateAction<AppData>> }) {
+function DataIO({
+  data,
+  setData,
+}: {
+  data: AppData;
+  setData: React.Dispatch<React.SetStateAction<AppData>>;
+}) {
   const exportData = () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -335,11 +367,12 @@ function DataIO({ data, setData }: { data: AppData; setData: React.Dispatch<Reac
         const json = JSON.parse(String(reader.result)) as AppData;
         setData(json);
         // push some parts to cloud
-        upsertDoc<TeamNameDoc>('team:name', { name: json.teamName }).catch(() => {});
-        upsertDoc<ResourcesDoc>('resources', json.resources).catch(() => {});
-        for (const wk in json.scheduleDays) upsertDoc<WeekDoc>(`schedule:${wk}`, json.scheduleDays[wk] as WeekDoc).catch(() => {});
-        upsertDoc<NotesDoc>('notes:shared', { content: json.notes.shared }).catch(() => {});
-        for (const p of PLAYERS) upsertDoc<NotesDoc>(`notes:${p}`, { content: json.notes[p] || '' }).catch(() => {});
+        upsertDoc<TeamNameDoc>("team:name", { name: json.teamName }).catch(() => {});
+        upsertDoc<ResourcesDoc>("resources", json.resources).catch(() => {});
+        for (const wk in json.scheduleDays)
+          upsertDoc<WeekDoc>(`schedule:${wk}`, json.scheduleDays[wk] as WeekDoc).catch(() => {});
+        upsertDoc<NotesDoc>("notes:shared", { content: json.notes.shared }).catch(() => {});
+        for (const p of PLAYERS) upsertDoc<NotesDoc>(`notes:${p}`, { content: json.notes[p] || "" }).catch(() => {});
       } catch {
         alert("Invalid JSON file.");
       }
@@ -368,10 +401,20 @@ function DataIO({ data, setData }: { data: AppData; setData: React.Dispatch<Reac
 }
 
 // === Scheduler (day-level labels) ===
-function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React.Dispatch<React.SetStateAction<AppData>>; weekStart: Date; }) {
+function Scheduler({
+  data,
+  setData,
+  weekStart,
+}: {
+  data: AppData;
+  setData: React.Dispatch<React.SetStateAction<AppData>>;
+  weekStart: Date;
+}) {
   const dates = useMemo(() => getWeekDates(weekStart), [weekStart]);
   const wk = weekKey(weekStart);
   const dayKey = (d: Date) => d.toISOString().slice(0, 10);
+  const statusFor = (player: Player, key: string): DayStatus | undefined =>
+    data.scheduleDays?.[wk]?.[player]?.[key];
 
   // Ensure week structure exists for day-level scheduling
   useEffect(() => {
@@ -395,7 +438,10 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
     });
     // push to cloud (upsert whole week blob)
     const weekBlob = data.scheduleDays?.[wk] || {};
-    const nextBlob: WeekDoc = { ...(weekBlob as WeekDoc), [player]: { ...((weekBlob as WeekDoc)[player] || {}), [key]: status } } as WeekDoc;
+    const nextBlob: WeekDoc = {
+      ...(weekBlob as WeekDoc),
+      [player]: { ...((weekBlob as WeekDoc)[player] || {}), [key]: status },
+    } as WeekDoc;
     upsertDoc<WeekDoc>(`schedule:${wk}`, nextBlob).catch(() => {});
   };
 
@@ -405,18 +451,33 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
     const channel = supabase
       .channel(`apex_docs_changes_schedule_${wk}`)
       .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'apex_docs', filter: `team_code=eq.${TEAM_CODE}` },
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "apex_docs", filter: `team_code=eq.${TEAM_CODE}` },
         (payload) => {
-          const row = (payload as { new: { key: string; value: unknown } }).new;
-          if (!row) return;
+          const rowUnknown = (payload as unknown as { new?: unknown }).new;
+          if (!rowUnknown || !isKVRow(rowUnknown)) return;
+          const row = rowUnknown as KVRow;
+          if (row.key === `schedule:${wk}`) {
+            setData((s) => ({ ...s, scheduleDays: { ...s.scheduleDays, [wk]: row.value as WeekDoc } }));
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "apex_docs", filter: `team_code=eq.${TEAM_CODE}` },
+        (payload) => {
+          const rowUnknown = (payload as unknown as { new?: unknown }).new;
+          if (!rowUnknown || !isKVRow(rowUnknown)) return;
+          const row = rowUnknown as KVRow;
           if (row.key === `schedule:${wk}`) {
             setData((s) => ({ ...s, scheduleDays: { ...s.scheduleDays, [wk]: row.value as WeekDoc } }));
           }
         }
       )
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [wk, setData]);
 
   // Load current week from cloud on mount/week change
@@ -427,11 +488,29 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
     })();
   }, [wk, setData]);
 
+  // per-day count of YES across players for heat/summary row
+  const countsYes = useMemo(() => {
+    const c: Record<string, number> = {};
+    const week = data.scheduleDays?.[wk] || {};
+    for (const d of dates) {
+      const k = dayKey(d);
+      let n = 0;
+      for (const p of PLAYERS) if (week[p]?.[k] === "YES") n++;
+      c[k] = n;
+    }
+    return c;
+  }, [data.scheduleDays, wk, dates]);
+
+  // currently selected player (for button row + header text)
+  const active: Player = data.activePlayer;
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <CalendarDays className="h-5 w-5" /> Weekly Availability (tap <span className="mx-1">{"\u2705"} / {"\u2753"} / {"\u274C"}</span> for <strong className="ml-1">{active}</strong>)
+          <CalendarDays className="h-5 w-5" /> Weekly Availability (tap{" "}
+          <span className="mx-1">{"\u2705"} / {"\u2753"} / {"\u274C"}</span> for{" "}
+          <strong className="ml-1">{active}</strong>)
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -508,9 +587,15 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
           </Table>
         </div>
         <div className="mt-3 flex items-center gap-4 text-sm text-muted-foreground">
-          <div className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded bg-emerald-500" /> {"\u2705"}</div>
-          <div className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded bg-amber-400" /> {"\u2753"}</div>
-          <div className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded bg-slate-300" /> {"\u274C"}</div>
+          <div className="flex items-center gap-1">
+            <span className="inline-block h-3 w-3 rounded bg-emerald-500" /> {"\u2705"}
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="inline-block h-3 w-3 rounded bg-amber-400" /> {"\u2753"}
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="inline-block h-3 w-3 rounded bg-slate-300" /> {"\u274C"}
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -518,12 +603,18 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
 }
 
 // === Notepad ===
-function Notepad({ data, setData }: { data: AppData; setData: React.Dispatch<React.SetStateAction<AppData>> }) {
+function Notepad({
+  data,
+  setData,
+}: {
+  data: AppData;
+  setData: React.Dispatch<React.SetStateAction<AppData>>;
+}) {
   const [tab, setTab] = useState<"shared" | Player>("shared");
   const val = data.notes[tab] ?? "";
   const save = (text: string) => {
     setData((s) => ({ ...s, notes: { ...s.notes, [tab]: text } }));
-    const key = tab === 'shared' ? 'notes:shared' : `notes:${tab}`;
+    const key = tab === "shared" ? "notes:shared" : `notes:${tab}`;
     upsertDoc<NotesDoc>(key, { content: text }).catch(() => {});
   };
 
@@ -531,32 +622,55 @@ function Notepad({ data, setData }: { data: AppData; setData: React.Dispatch<Rea
   useEffect(() => {
     if (!supabase) return;
     const channel = supabase
-      .channel('apex_docs_changes_notes')
+      .channel("apex_docs_changes_notes")
       .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'apex_docs', filter: `team_code=eq.${TEAM_CODE}` },
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "apex_docs", filter: `team_code=eq.${TEAM_CODE}` },
         (payload) => {
-          const row = (payload as { new: { key: string; value: unknown } }).new;
-          if (!row) return;
-          if (row.key === 'notes:shared') setData((s) => ({ ...s, notes: { ...s.notes, shared: (row.value as NotesDoc)?.content || '' } }));
+          const rowUnknown = (payload as unknown as { new?: unknown }).new;
+          if (!rowUnknown || !isKVRow(rowUnknown)) return;
+          const row = rowUnknown as KVRow;
+          if (row.key === "notes:shared")
+            setData((s) => ({ ...s, notes: { ...s.notes, shared: (row.value as NotesDoc)?.content || "" } }));
           for (const p of PLAYERS) {
-            if (row.key === `notes:${p}`) setData((s) => ({ ...s, notes: { ...s.notes, [p]: (row.value as NotesDoc)?.content || '' } }));
+            if (row.key === `notes:${p}`)
+              setData((s) => ({ ...s, notes: { ...s.notes, [p]: (row.value as NotesDoc)?.content || "" } }));
           }
-          if (row.key === 'team:name') setData((s) => ({ ...s, teamName: (row.value as TeamNameDoc)?.name || s.teamName }));
+          if (row.key === "team:name")
+            setData((s) => ({ ...s, teamName: (row.value as TeamNameDoc)?.name || s.teamName }));
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "apex_docs", filter: `team_code=eq.${TEAM_CODE}` },
+        (payload) => {
+          const rowUnknown = (payload as unknown as { new?: unknown }).new;
+          if (!rowUnknown || !isKVRow(rowUnknown)) return;
+          const row = rowUnknown as KVRow;
+          if (row.key === "notes:shared")
+            setData((s) => ({ ...s, notes: { ...s.notes, shared: (row.value as NotesDoc)?.content || "" } }));
+          for (const p of PLAYERS) {
+            if (row.key === `notes:${p}`)
+              setData((s) => ({ ...s, notes: { ...s.notes, [p]: (row.value as NotesDoc)?.content || "" } }));
+          }
+          if (row.key === "team:name")
+            setData((s) => ({ ...s, teamName: (row.value as TeamNameDoc)?.name || s.teamName }));
         }
       )
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [setData]);
 
   // initial load of notes
   useEffect(() => {
     (async () => {
-      const shared = await getDoc<NotesDoc>('notes:shared');
-      if (shared) setData((s) => ({ ...s, notes: { ...s.notes, shared: shared.content || '' } }));
+      const shared = await getDoc<NotesDoc>("notes:shared");
+      if (shared) setData((s) => ({ ...s, notes: { ...s.notes, shared: shared.content || "" } }));
       for (const p of PLAYERS) {
         const n = await getDoc<NotesDoc>(`notes:${p}`);
-        if (n) setData((s) => ({ ...s, notes: { ...s.notes, [p]: n.content || '' } }));
+        if (n) setData((s) => ({ ...s, notes: { ...s.notes, [p]: n.content || "" } }));
       }
     })();
   }, [setData]);
@@ -564,14 +678,18 @@ function Notepad({ data, setData }: { data: AppData; setData: React.Dispatch<Rea
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2"><NotebookPen className="h-5 w-5" /> Squad Notepad</CardTitle>
+        <CardTitle className="flex items-center gap-2">
+          <NotebookPen className="h-5 w-5" /> Squad Notepad
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <Tabs value={tab} onValueChange={(v) => setTab(v as "shared" | Player)}>
           <TabsList>
             <TabsTrigger value="shared">Shared</TabsTrigger>
             {PLAYERS.map((p) => (
-              <TabsTrigger key={p} value={p}>{p}</TabsTrigger>
+              <TabsTrigger key={p} value={p}>
+                {p}
+              </TabsTrigger>
             ))}
           </TabsList>
           <TabsContent value={tab} className="mt-4">
@@ -581,7 +699,9 @@ function Notepad({ data, setData }: { data: AppData; setData: React.Dispatch<Rea
               placeholder={tab === "shared" ? "Team reflections, reminders, and strategies..." : `Notes for ${tab}...`}
               className="min-h-[180px]"
             />
-            <div className="mt-2 text-xs text-muted-foreground">Auto-saved to cloud for team code <span className="font-mono">{TEAM_CODE}</span>.</div>
+            <div className="mt-2 text-xs text-muted-foreground">
+              Auto-saved to cloud for team code <span className="font-mono">{TEAM_CODE}</span>.
+            </div>
           </TabsContent>
         </Tabs>
       </CardContent>
@@ -590,7 +710,11 @@ function Notepad({ data, setData }: { data: AppData; setData: React.Dispatch<Rea
 }
 
 // === Resources ===
-function ResourceForm({ onAdd }: { onAdd: (r: { id: string; title: string; url: string; type: string; desc?: string }) => void }) {
+function ResourceForm({
+  onAdd,
+}: {
+  onAdd: (r: { id: string; title: string; url: string; type: string; desc?: string }) => void;
+}) {
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
   const [type, setType] = useState("Video");
@@ -604,7 +728,10 @@ function ResourceForm({ onAdd }: { onAdd: (r: { id: string; title: string; url: 
     try {
       const u = new URL(url.startsWith("http") ? url : `https://${url}`);
       onAdd({ id: crypto.randomUUID(), title, url: u.toString(), type, desc });
-      setTitle(""); setUrl(""); setType("Video"); setDesc("");
+      setTitle("");
+      setUrl("");
+      setType("Video");
+      setDesc("");
     } catch {
       alert("Invalid URL");
     }
@@ -623,10 +750,14 @@ function ResourceForm({ onAdd }: { onAdd: (r: { id: string; title: string; url: 
       <div>
         <label className="text-xs text-muted-foreground">Type</label>
         <Select value={type} onValueChange={setType}>
-          <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-[140px]">
+            <SelectValue />
+          </SelectTrigger>
           <SelectContent>
             {["Video", "Website", "Tutorial", "Loadout", "Map Guide", "Other"].map((t) => (
-              <SelectItem key={t} value={t}>{t}</SelectItem>
+              <SelectItem key={t} value={t}>
+                {t}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -635,43 +766,65 @@ function ResourceForm({ onAdd }: { onAdd: (r: { id: string; title: string; url: 
         <label className="text-xs text-muted-foreground">Description</label>
         <Input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Why it's useful..." />
       </div>
-      <Button onClick={add}><Plus className="h-4 w-4 mr-1" /> Add</Button>
+      <Button onClick={add}>
+        <Plus className="h-4 w-4 mr-1" /> Add
+      </Button>
     </div>
   );
 }
 
-function Resources({ data, setData }: { data: AppData; setData: React.Dispatch<React.SetStateAction<AppData>> }) {
+function Resources({
+  data,
+  setData,
+}: {
+  data: AppData;
+  setData: React.Dispatch<React.SetStateAction<AppData>>;
+}) {
   const add = (r: { id: string; title: string; url: string; type: string; desc?: string }) => {
     setData((s) => ({ ...s, resources: [r, ...s.resources] }));
     const next: ResourcesDoc = [r, ...data.resources];
-    upsertDoc<ResourcesDoc>('resources', next).catch(() => {});
+    upsertDoc<ResourcesDoc>("resources", next).catch(() => {});
   };
   const remove = (id: string) => {
     const next: ResourcesDoc = data.resources.filter((x) => x.id !== id);
     setData((s) => ({ ...s, resources: next }));
-    upsertDoc<ResourcesDoc>('resources', next).catch(() => {});
+    upsertDoc<ResourcesDoc>("resources", next).catch(() => {});
   };
 
   // realtime + initial load
   useEffect(() => {
     if (!supabase) return;
     const channel = supabase
-      .channel('apex_docs_changes_resources')
+      .channel("apex_docs_changes_resources")
       .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'apex_docs', filter: `team_code=eq.${TEAM_CODE}` },
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "apex_docs", filter: `team_code=eq.${TEAM_CODE}` },
         (payload) => {
-          const row = (payload as { new: { key: string; value: unknown } }).new;
-          if (row?.key === 'resources') setData((s) => ({ ...s, resources: (row.value as ResourcesDoc) || [] }));
+          const rowUnknown = (payload as unknown as { new?: unknown }).new;
+          if (!rowUnknown || !isKVRow(rowUnknown)) return;
+          const row = rowUnknown as KVRow;
+          if (row.key === "resources") setData((s) => ({ ...s, resources: (row.value as ResourcesDoc) || [] }));
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "apex_docs", filter: `team_code=eq.${TEAM_CODE}` },
+        (payload) => {
+          const rowUnknown = (payload as unknown as { new?: unknown }).new;
+          if (!rowUnknown || !isKVRow(rowUnknown)) return;
+          const row = rowUnknown as KVRow;
+          if (row.key === "resources") setData((s) => ({ ...s, resources: (row.value as ResourcesDoc) || [] }));
         }
       )
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [setData]);
 
   useEffect(() => {
     (async () => {
-      const res = await getDoc<ResourcesDoc>('resources');
+      const res = await getDoc<ResourcesDoc>("resources");
       if (res) setData((s) => ({ ...s, resources: res }));
     })();
   }, [setData]);
@@ -679,7 +832,9 @@ function Resources({ data, setData }: { data: AppData; setData: React.Dispatch<R
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2"><LinkIcon className="h-5 w-5" /> Shared Resources</CardTitle>
+        <CardTitle className="flex items-center gap-2">
+          <LinkIcon className="h-5 w-5" /> Shared Resources
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <ResourceForm onAdd={add} />
@@ -696,7 +851,12 @@ function Resources({ data, setData }: { data: AppData; setData: React.Dispatch<R
                 <CardContent className="space-y-2">
                   {r.desc && <p className="text-sm text-muted-foreground">{r.desc}</p>}
                   <div className="flex items-center justify-between">
-                    <a href={r.url} target="_blank" rel="noreferrer" className="text-sm inline-flex items-center gap-1 hover:underline">
+                    <a
+                      href={r.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sm inline-flex items-center gap-1 hover:underline"
+                    >
                       Open <ExternalLink className="h-4 w-4" />
                     </a>
                     <Button variant="ghost" size="icon" onClick={() => remove(r.id)} title="Remove">
@@ -740,7 +900,8 @@ export default function ApexSquadApp() {
 
       <footer className="pt-4 text-xs text-muted-foreground">
         <p>
-          Data is synced to the cloud for team code <span className="font-mono">{TEAM_CODE}</span> when Supabase env vars are configured. Otherwise, Export/Import works locally.
+          Data is synced to the cloud for team code <span className="font-mono">{TEAM_CODE}</span> when Supabase env vars
+          are configured. Otherwise, Export/Import works locally.
         </p>
       </footer>
     </div>
@@ -763,10 +924,16 @@ export default function ApexSquadApp() {
 
     const base = new Date("2025-09-29T00:00:00Z"); // Monday
     const win = getWeeksFrom(base, 4);
-    console.assert(win[0].getDate() === 29 && win[0].getMonth() === 8, "window[0] should equal selected start (Sep 29)");
+    console.assert(
+      win[0].getDate() === 29 && win[0].getMonth() === 8,
+      "window[0] should equal selected start (Sep 29)"
+    );
     console.assert(win[1].getDate() === 6 && win[1].getMonth() === 9, "window[1] should be Oct 6");
 
-    console.assert(STATUS_LABEL.YES === "\u2705" && STATUS_LABEL.TBD === "\u2753" && STATUS_LABEL.NO === "\u274C", "STATUS_LABEL baseline");
+    console.assert(
+      STATUS_LABEL.YES === "\u2705" && STATUS_LABEL.TBD === "\u2753" && STATUS_LABEL.NO === "\u274C",
+      "STATUS_LABEL baseline"
+    );
   } catch (err) {
     // Never throw in production; just log. These are smoke tests.
     console.warn("App tests encountered an error:", err);
