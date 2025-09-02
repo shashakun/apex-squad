@@ -181,6 +181,11 @@ const initialData: AppData = {
   resources: [],
 };
 
+// Unique key for a week start (YYYY-MM-DD)
+function weekKey(weekStart: Date): string {
+  return `${weekStart.getFullYear()}-${String(weekStart.getMonth() + 1).padStart(2, "0")}-${String(weekStart.getDate()).padStart(2, "0")}`;
+}
+
 // === Header ===
 function Header({ data, setData, weekStart, setWeekStart }: { data: AppData; setData: React.Dispatch<React.SetStateAction<AppData>>; weekStart: Date; setWeekStart: (d: Date) => void; }) {
   const wk = weekKey(weekStart);
