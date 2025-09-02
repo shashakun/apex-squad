@@ -101,6 +101,8 @@ async function upsertDoc<T>(key: string, value: T): Promise<void> {
 }
 
 // Heat color for team YES count (0..3)
+function classNames(...xs: Array<string | false | null | undefined>) { return xs.filter(Boolean).join(" "); }
+
 export function colorForCount(n: number) {
   if (n >= 3) return "bg-emerald-500 text-white";
   if (n === 2) return "bg-emerald-300 text-emerald-900";
