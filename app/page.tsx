@@ -1,6 +1,4 @@
 ﻿"use client";
-"use client";
-
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
@@ -47,7 +45,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient, type RealtimePostgresChangesPayload, type RealtimePostgresChangesFilter } from "@supabase/supabase-js";
 
 /**
  * APEX Squad Single-File App (React + Tailwind + shadcn/ui)
@@ -403,18 +401,21 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
   // subscribe to realtime changes for this week
   useEffect(() => {
     if (!supabase) return;
+    const filter: RealtimePostgresChangesFilter = {
+      event: '*',
+      schema: 'public',
+      table: 'apex_docs',
+      filter: `team_code=eq.${TEAM_CODE}`,
+    };
     const channel = supabase
-      .channel('apex_docs_changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'apex_docs', filter: `team_code=eq.${TEAM_CODE}` },
-        (payload: { new: { key: string; value: unknown } }) => {
-          const row = payload.new as { key: string; value: unknown };
-          if (row?.key === `schedule:${wk}`) {
-            setData((s) => ({ ...s, scheduleDays: { ...s.scheduleDays, [wk]: row.value as WeekDoc } }));
-          }
+      .channel(`apex_docs_changes_schedule_${wk}`)
+      .on('postgres_changes', filter, (payload: RealtimePostgresChangesPayload) => {
+        const row = payload.new as { key: string; value: unknown } | null;
+        if (!row) return;
+        if (row.key === `schedule:${wk}`) {
+          setData((s) => ({ ...s, scheduleDays: { ...s.scheduleDays, [wk]: row.value as WeekDoc } }));
         }
-      )
+      })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [wk, setData]);
@@ -546,21 +547,23 @@ function Notepad({ data, setData }: { data: AppData; setData: React.Dispatch<Rea
   // realtime subscription for notes + team name
   useEffect(() => {
     if (!supabase) return;
+    const filter: RealtimePostgresChangesFilter = {
+      event: '*',
+      schema: 'public',
+      table: 'apex_docs',
+      filter: `team_code=eq.${TEAM_CODE}`,
+    };
     const channel = supabase
-      .channel('apex_notes_changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'apex_docs', filter: `team_code=eq.${TEAM_CODE}` },
-        (payload: { new: { key: string; value: unknown } }) => {
-          const row = payload.new as { key: string; value: unknown };
-          if (!row) return;
-          if (row.key === 'notes:shared') setData((s) => ({ ...s, notes: { ...s.notes, shared: (row.value as NotesDoc)?.content || '' } }));
-          for (const p of PLAYERS) {
-            if (row.key === `notes:${p}`) setData((s) => ({ ...s, notes: { ...s.notes, [p]: (row.value as NotesDoc)?.content || '' } }));
-          }
-          if (row.key === 'team:name') setData((s) => ({ ...s, teamName: (row.value as TeamNameDoc)?.name || s.teamName }));
+      .channel('apex_docs_changes_notes')
+      .on('postgres_changes', filter, (payload: RealtimePostgresChangesPayload) => {
+        const row = payload.new as { key: string; value: unknown } | null;
+        if (!row) return;
+        if (row.key === 'notes:shared') setData((s) => ({ ...s, notes: { ...s.notes, shared: (row.value as NotesDoc)?.content || '' } }));
+        for (const p of PLAYERS) {
+          if (row.key === `notes:${p}`) setData((s) => ({ ...s, notes: { ...s.notes, [p]: (row.value as NotesDoc)?.content || '' } }));
         }
-      )
+        if (row.key === 'team:name') setData((s) => ({ ...s, teamName: (row.value as TeamNameDoc)?.name || s.teamName }));
+      })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [setData]);
@@ -671,16 +674,18 @@ function Resources({ data, setData }: { data: AppData; setData: React.Dispatch<R
   // realtime + initial load
   useEffect(() => {
     if (!supabase) return;
+    const filter: RealtimePostgresChangesFilter = {
+      event: '*',
+      schema: 'public',
+      table: 'apex_docs',
+      filter: `team_code=eq.${TEAM_CODE}`,
+    };
     const channel = supabase
-      .channel('apex_resources_changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'apex_docs', filter: `team_code=eq.${TEAM_CODE}` },
-        (payload: { new: { key: string; value: unknown } }) => {
-          const row = payload.new as { key: string; value: unknown };
-          if (row?.key === 'resources') setData((s) => ({ ...s, resources: (row.value as ResourcesDoc) || [] }));
-        }
-      )
+      .channel('apex_docs_changes_resources')
+      .on('postgres_changes', filter, (payload: RealtimePostgresChangesPayload) => {
+        const row = payload.new as { key: string; value: unknown } | null;
+        if (row?.key === 'resources') setData((s) => ({ ...s, resources: (row.value as ResourcesDoc) || [] }));
+      })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [setData]);
