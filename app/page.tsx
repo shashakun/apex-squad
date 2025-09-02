@@ -1,5 +1,5 @@
 ﻿"use client";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Card,
@@ -45,26 +45,54 @@ import {
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
+import { createClient } from "@supabase/supabase-js";
 
 /**
  * APEX Squad Single-File App (React + Tailwind + shadcn/ui)
  *
  * Features:
- * 1) Weekly scheduler (day-level): tap ✅ / ❓ / ❌ per player
+ * 1) Weekly scheduler (day-level): tap check / question / cross per player
  * 2) Shared notepad (plus per-person tabs)
  * 3) Shared resources list (title + URL + type + description)
  *
  * New in this version:
  * - Editable team name
- * - Week picker anchored to the **selected** week (fixes label drift)
- * - Schedule uses labels (✅ / ❓ / ❌); default (unset) displays "?"
+ * - Week picker anchored to the selected week (fixes label drift)
+ * - **Cloud sync via Supabase** (schedule, notes, resources, team name) — real-time for everyone with the same TEAM_CODE
+ * - Still supports Export/Import as a backup
  *
- * Data persistence: localStorage (Export/Import JSON to sync between friends).
+ * Data persistence: Supabase (primary) with optional local cache fallback.
  */
 
 // === Config ===
 const PLAYERS = ["Potato", "YX8", "Champerrin"] as const;
-const STORAGE_KEY = "apex-squad-data-v5"; // bump for new fields
+const STORAGE_KEY = "apex-squad-cache-v1"; // local fallback cache
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL as string | undefined;
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string | undefined;
+export const TEAM_CODE = (process.env.NEXT_PUBLIC_TEAM_CODE as string) || "apex-squad-demo";
+
+export const supabase = SUPABASE_URL && SUPABASE_ANON_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false } })
+  : null;
+
+// Key-value doc helpers in Supabase
+async function getDoc(key: string): Promise<any | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("apex_docs")
+    .select("value")
+    .eq("team_code", TEAM_CODE)
+    .eq("key", key)
+    .maybeSingle();
+  if (error) return null;
+  return data?.value ?? null;
+}
+
+async function upsertDoc(key: string, value: any): Promise<void> {
+  if (!supabase) return;
+  await supabase.from("apex_docs").upsert({ team_code: TEAM_CODE, key, value });
+}
 
 // === Utils ===
 function startOfWeek(date = new Date()): Date {
@@ -83,17 +111,6 @@ function startOfNextWeek(date = new Date()): Date {
   return nextMonday;
 }
 
-function getFutureWeekStarts(count = 4, from = new Date()): Date[] {
-  const base = startOfNextWeek(from);
-  return Array.from({ length: count }, (_, i) => {
-    const d = new Date(base);
-    d.setDate(base.getDate() + i * 7);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  });
-}
-
-// New: weeks window anchored to the provided start (includes the start week itself)
 function getWeeksFrom(start: Date, count = 4): Date[] {
   const base = startOfWeek(start);
   return Array.from({ length: count }, (_, i) => {
@@ -128,7 +145,7 @@ function classNames(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
 }
 
-// Heat color for team YES (✅) count (0..3)
+// Heat color for team YES count (0..3)
 export function colorForCount(n: number) {
   if (n >= 3) return "bg-emerald-500 text-white";
   if (n === 2) return "bg-emerald-300 text-emerald-900";
@@ -153,7 +170,7 @@ function availIconFor(player: string) {
   );
 }
 
-// === Persistence hook ===
+// === Persistence hook (local cache) ===
 function useLocalState<T>(defaultValue: T): [T, React.Dispatch<React.SetStateAction<T>>] {
   const [state, setState] = useState<T>(() => {
     try {
@@ -164,7 +181,7 @@ function useLocalState<T>(defaultValue: T): [T, React.Dispatch<React.SetStateAct
     }
   });
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
   }, [state]);
   return [state, setState];
 }
@@ -176,9 +193,9 @@ type Player = typeof PLAYERS[number];
 type DayStatus = "YES" | "TBD" | "NO"; // underlying value; UI uses check / question / cross
 
 const STATUS_LABEL: Record<DayStatus, string> = {
-  YES: "✅",
-  TBD: "❓", // explicit TBD shows a question mark
-  NO: "❌",
+  YES: "\u2705",
+  TBD: "\u2753", // explicit TBD shows a question mark
+  NO: "\u274C",
 };
 
 const STATUS_TEXT_CLASS: Record<DayStatus, string> = {
@@ -191,9 +208,7 @@ interface AppData {
   players: Player[];
   activePlayer: Player;
   teamName: string;
-  // Legacy hour-level schedule kept for compatibility (unused now)
   schedule: Record<string, unknown>;
-  // New day-level schedule
   scheduleDays: Record<string, Record<Player, Record<string, DayStatus>>>; // { weekKey: { player: { YYYY-MM-DD: status } } }
   notes: Record<"shared" | Player, string>;
   resources: Array<{ id: string; title: string; url: string; type: string; desc?: string }>;
@@ -213,12 +228,29 @@ const initialData: AppData = {
 function Header({ data, setData, weekStart, setWeekStart }: { data: AppData; setData: React.Dispatch<React.SetStateAction<AppData>>; weekStart: Date; setWeekStart: (d: Date) => void; }) {
   const wk = weekKey(weekStart);
   const windowWeeks = getWeeksFrom(weekStart, 4); // anchored to selected week
+  const nameDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const shiftWeek = (delta: number) => {
     const d = new Date(weekStart);
     d.setDate(d.getDate() + delta * 7);
     setWeekStart(startOfWeek(d));
   };
+
+  // Persist team name to cloud (debounced)
+  const onNameChange = (val: string) => {
+    setData((s) => ({ ...s, teamName: val }));
+    if (nameDebounce.current) clearTimeout(nameDebounce.current);
+    nameDebounce.current = setTimeout(() => {
+      upsertDoc('team:name', { name: val }).catch(() => {});
+    }, 400);
+  };
+
+  useEffect(() => {
+    (async () => {
+      const nm = await getDoc('team:name');
+      if (nm?.name) setData((s) => ({ ...s, teamName: nm.name }));
+    })();
+  }, [setData]);
 
   return (
     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -228,18 +260,14 @@ function Header({ data, setData, weekStart, setWeekStart }: { data: AppData; set
           <Input
             aria-label="Team name"
             value={data.teamName}
-            onChange={(e) => setData((s) => ({ ...s, teamName: e.target.value }))}
+            onChange={(e) => onNameChange(e.target.value)}
             className="text-2xl font-bold bg-transparent border-0 p-0 h-auto focus-visible:ring-0 focus-visible:outline-none"
             placeholder="Team name"
           />
-          <p className="text-sm text-muted-foreground">Scheduling • Notes • Resources</p>
+          <p className="text-xs text-muted-foreground">Team code: <span className="font-mono">{TEAM_CODE}</span> • Week of {formatDate(weekStart)} <Badge variant="secondary" className="ml-1">{wk}</Badge></p>
         </div>
       </div>
       <div className="flex items-center gap-3">
-        <div className="hidden md:flex items-center gap-2 text-sm text-muted-foreground">
-          <CalendarDays className="h-4 w-4" /> Week of {formatDate(weekStart)}
-          <Badge variant="secondary" className="ml-1">{wk}</Badge>
-        </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => shiftWeek(-1)} title="Previous week"><ChevronLeft className="h-4 w-4" /></Button>
           <Select value={"0"} onValueChange={(v) => setWeekStart(windowWeeks[Number(v)] || windowWeeks[0])}>
@@ -281,9 +309,7 @@ function Header({ data, setData, weekStart, setWeekStart }: { data: AppData; set
 // === Export / Import ===
 function DataIO({ data, setData }: { data: AppData; setData: React.Dispatch<React.SetStateAction<AppData>> }) {
   const exportData = () => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
-      type: "application/json",
-    });
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -300,6 +326,12 @@ function DataIO({ data, setData }: { data: AppData; setData: React.Dispatch<Reac
       try {
         const json = JSON.parse(String(reader.result)) as AppData;
         setData(json);
+        // push some parts to cloud
+        upsertDoc('team:name', { name: json.teamName }).catch(() => {});
+        upsertDoc('resources', json.resources).catch(() => {});
+        for (const wk in json.scheduleDays) upsertDoc(`schedule:${wk}`, json.scheduleDays[wk]).catch(() => {});
+        upsertDoc('notes:shared', { content: json.notes.shared }).catch(() => {});
+        for (const p of PLAYERS) upsertDoc(`notes:${p}`, { content: json.notes[p] || '' }).catch(() => {});
       } catch {
         alert("Invalid JSON file.");
       }
@@ -338,9 +370,7 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
     setData((s) => {
       const scheduleDays = { ...(s.scheduleDays || {}) };
       if (!scheduleDays[wk]) scheduleDays[wk] = {} as Record<Player, Record<string, DayStatus>>;
-      for (const p of PLAYERS) {
-        scheduleDays[wk][p] = scheduleDays[wk][p] || {};
-      }
+      for (const p of PLAYERS) scheduleDays[wk][p] = scheduleDays[wk][p] || {};
       return { ...s, scheduleDays };
     });
   }, [wk, setData]);
@@ -355,7 +385,32 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
       scheduleDays[wk] = week;
       return { ...s, scheduleDays };
     });
+    // push to cloud (upsert whole week blob)
+    const weekBlob = data.scheduleDays?.[wk] || {};
+    const nextBlob = { ...weekBlob, [player]: { ...(weekBlob[player] || {}), [key]: status } };
+    upsertDoc(`schedule:${wk}`, nextBlob).catch(() => {});
   };
+
+  // subscribe to realtime changes for this week
+  useEffect(() => {
+    if (!supabase) return;
+    const channel = supabase
+      .channel('apex_docs_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'apex_docs', filter: `team_code=eq.${TEAM_CODE}` }, (payload: any) => {
+        const row = payload.new as { key: string; value: any };
+        if (row?.key === `schedule:${wk}`) setData((s) => ({ ...s, scheduleDays: { ...s.scheduleDays, [wk]: row.value as any } }));
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [wk, setData]);
+
+  // Load current week from cloud on mount/week change
+  useEffect(() => {
+    (async () => {
+      const cloud = await getDoc(`schedule:${wk}`);
+      if (cloud) setData((s) => ({ ...s, scheduleDays: { ...s.scheduleDays, [wk]: cloud as any } }));
+    })();
+  }, [wk, setData]);
 
   const statusFor = (player: Player, key: string): DayStatus | undefined => (data.scheduleDays?.[wk]?.[player]?.[key]);
 
@@ -377,7 +432,7 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <CalendarDays className="h-5 w-5" /> Weekly Availability (tap <span className="mx-1">{"✅"} / {"❓"} / {"❌"}</span> for <strong className="ml-1">{active}</strong>)
+          <CalendarDays className="h-5 w-5" /> Weekly Availability (tap <span className="mx-1">{"\u2705"} / {"\u2753"} / {"\u274C"}</span> for <strong className="ml-1">{active}</strong>)
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -396,14 +451,14 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
             </TableHeader>
             <TableBody>
               <TableRow>
-                <TableCell className="font-medium">Team {"✅"}</TableCell>
+                <TableCell className="font-medium">Team {"\u2705"}</TableCell>
                 {dates.map((d) => {
                   const k = dayKey(d);
                   const n = countsYes[k] || 0;
                   return (
                     <TableCell key={k} className="p-2">
                       <div className={classNames("rounded-md px-2 py-1 text-xs border", colorForCount(n))}>
-                        {n}/3 {"✅"} {n === 3 ? "★" : ""}
+                        {n}/3 {"\u2705"} {n === 3 ? "★" : ""}
                       </div>
                       <div className="mt-1 flex items-center justify-center gap-2 text-[12px]">
                         {PLAYERS.map((p) => {
@@ -442,9 +497,9 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
                   return (
                     <TableCell key={k} className="p-2">
                       <div className="inline-flex items-center gap-1 border rounded-md p-1">
-                        <Opt value="YES">{"✅"}</Opt>
-                        <Opt value="TBD">{"❓"}</Opt>
-                        <Opt value="NO">{"❌"}</Opt>
+                        <Opt value="YES">{"\u2705"}</Opt>
+                        <Opt value="TBD">{"\u2753"}</Opt>
+                        <Opt value="NO">{"\u274C"}</Opt>
                       </div>
                     </TableCell>
                   );
@@ -454,9 +509,9 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
           </Table>
         </div>
         <div className="mt-3 flex items-center gap-4 text-sm text-muted-foreground">
-          <div className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded bg-emerald-500" /> {"✅"}</div>
-          <div className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded bg-amber-400" /> {"❓"}</div>
-          <div className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded bg-slate-300" /> {"❌"}</div>
+          <div className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded bg-emerald-500" /> {"\u2705"}</div>
+          <div className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded bg-amber-400" /> {"\u2753"}</div>
+          <div className="flex items-center gap-1"><span className="inline-block h-3 w-3 rounded bg-slate-300" /> {"\u274C"}</div>
         </div>
       </CardContent>
     </Card>
@@ -467,7 +522,39 @@ function Scheduler({ data, setData, weekStart }: { data: AppData; setData: React
 function Notepad({ data, setData }: { data: AppData; setData: React.Dispatch<React.SetStateAction<AppData>> }) {
   const [tab, setTab] = useState<"shared" | Player>("shared");
   const val = data.notes[tab] ?? "";
-  const save = (text: string) => setData((s) => ({ ...s, notes: { ...s.notes, [tab]: text } }));
+  const save = (text: string) => {
+    setData((s) => ({ ...s, notes: { ...s.notes, [tab]: text } }));
+    const key = tab === 'shared' ? 'notes:shared' : `notes:${tab}`;
+    upsertDoc(key, { content: text }).catch(() => {});
+  };
+
+  // realtime subscription for notes + team name
+  useEffect(() => {
+    if (!supabase) return;
+    const channel = supabase
+      .channel('apex_notes_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'apex_docs', filter: `team_code=eq.${TEAM_CODE}` }, (payload: any) => {
+        const row = payload.new as { key: string; value: any };
+        if (!row) return;
+        if (row.key === 'notes:shared') setData((s) => ({ ...s, notes: { ...s.notes, shared: row.value?.content || '' } }));
+        for (const p of PLAYERS) if (row.key === `notes:${p}`) setData((s) => ({ ...s, notes: { ...s.notes, [p]: row.value?.content || '' } }));
+        if (row.key === 'team:name') setData((s) => ({ ...s, teamName: row.value?.name || s.teamName }));
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [setData]);
+
+  // initial load of notes
+  useEffect(() => {
+    (async () => {
+      const shared = await getDoc('notes:shared');
+      if (shared) setData((s) => ({ ...s, notes: { ...s.notes, shared: shared.content || '' } }));
+      for (const p of PLAYERS) {
+        const n = await getDoc(`notes:${p}`);
+        if (n) setData((s) => ({ ...s, notes: { ...s.notes, [p]: n.content || '' } }));
+      }
+    })();
+  }, [setData]);
 
   return (
     <Card>
@@ -489,7 +576,7 @@ function Notepad({ data, setData }: { data: AppData; setData: React.Dispatch<Rea
               placeholder={tab === "shared" ? "Team reflections, reminders, and strategies..." : `Notes for ${tab}...`}
               className="min-h-[180px]"
             />
-            <div className="mt-2 text-xs text-muted-foreground">Auto-saved locally.</div>
+            <div className="mt-2 text-xs text-muted-foreground">Auto-saved to cloud for team code <span className="font-mono">{TEAM_CODE}</span>.</div>
           </TabsContent>
         </Tabs>
       </CardContent>
@@ -512,10 +599,7 @@ function ResourceForm({ onAdd }: { onAdd: (r: { id: string; title: string; url: 
     try {
       const u = new URL(url.startsWith("http") ? url : `https://${url}`);
       onAdd({ id: crypto.randomUUID(), title, url: u.toString(), type, desc });
-      setTitle("");
-      setUrl("");
-      setType("Video");
-      setDesc("");
+      setTitle(""); setUrl(""); setType("Video"); setDesc("");
     } catch {
       alert("Invalid URL");
     }
@@ -552,8 +636,35 @@ function ResourceForm({ onAdd }: { onAdd: (r: { id: string; title: string; url: 
 }
 
 function Resources({ data, setData }: { data: AppData; setData: React.Dispatch<React.SetStateAction<AppData>> }) {
-  const add = (r: { id: string; title: string; url: string; type: string; desc?: string }) => setData((s) => ({ ...s, resources: [r, ...s.resources] }));
-  const remove = (id: string) => setData((s) => ({ ...s, resources: s.resources.filter((x) => x.id !== id) }));
+  const add = (r: { id: string; title: string; url: string; type: string; desc?: string }) => {
+    setData((s) => ({ ...s, resources: [r, ...s.resources] }));
+    upsertDoc('resources', [r, ...data.resources]).catch(() => {});
+  };
+  const remove = (id: string) => {
+    const next = data.resources.filter((x) => x.id !== id);
+    setData((s) => ({ ...s, resources: next }));
+    upsertDoc('resources', next).catch(() => {});
+  };
+
+  // realtime + initial load
+  useEffect(() => {
+    if (!supabase) return;
+    const channel = supabase
+      .channel('apex_resources_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'apex_docs', filter: `team_code=eq.${TEAM_CODE}` }, (payload: any) => {
+        const row = payload.new as { key: string; value: any };
+        if (row?.key === 'resources') setData((s) => ({ ...s, resources: (row.value || []) as any }));
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [setData]);
+
+  useEffect(() => {
+    (async () => {
+      const res = await getDoc('resources');
+      if (res) setData((s) => ({ ...s, resources: res as any }));
+    })();
+  }, [setData]);
 
   return (
     <Card>
@@ -600,8 +711,15 @@ export default function ApexSquadApp() {
   const [data, setData] = useLocalState<AppData>(initialData);
   const [weekStart, setWeekStart] = useState<Date>(() => startOfNextWeek(new Date()));
 
+  const cloudReady = !!supabase;
+
   return (
     <div className="mx-auto max-w-6xl p-4 md:p-8 space-y-6">
+      {!cloudReady && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 text-amber-900 p-3 text-sm">
+          Cloud sync disabled (missing Supabase env). The app will only save to this browser.
+        </div>
+      )}
       <Header data={data} setData={setData} weekStart={weekStart} setWeekStart={setWeekStart} />
 
       <div className="grid grid-cols-1 gap-6">
@@ -612,8 +730,7 @@ export default function ApexSquadApp() {
 
       <footer className="pt-4 text-xs text-muted-foreground">
         <p>
-          Data is stored locally in your browser. Use Export/Import (top right) to sync with friends.
-          Scheduling shows <strong>the selected week (Monday start)</strong>; tap <strong>{"✅"} / {"❓"} / {"❌"}</strong> for each day. Use the week picker (anchored to the current selection) or the arrows to move week-by-week.
+          Data is synced to the cloud for team code <span className="font-mono">{TEAM_CODE}</span> when Supabase env vars are configured. Otherwise, Export/Import works locally.
         </p>
       </footer>
     </div>
@@ -623,33 +740,23 @@ export default function ApexSquadApp() {
 // === Minimal runtime tests (executed once on load) ===
 (function runTests() {
   try {
-    // 1) startOfNextWeek should return Monday for a known Sunday
     const sun = new Date("2025-08-31T12:00:00Z"); // Sunday
     const mon = startOfNextWeek(sun);
     console.assert(mon.getDay() === 1, "startOfNextWeek should land on Monday");
 
-    // 2) weekKey formatting
     const wk = weekKey(new Date("2025-09-01T00:00:00Z"));
     console.assert(/\d{4}-\d{2}-\d{2}/.test(wk), "weekKey should be YYYY-MM-DD");
 
-    // 3) getWeekDates length
     console.assert(getWeekDates(new Date("2025-09-01T00:00:00Z")).length === 7, "getWeekDates should return 7 days");
 
-    // 4) colorForCount sanity
     console.assert(colorForCount(0).includes("bg-"), "colorForCount returns a class string");
 
-    // 5) getFutureWeekStarts: first equals next Monday; count matches
-    const fs = getFutureWeekStarts(4, new Date("2025-08-29T00:00:00Z"));
-    console.assert(fs.length === 4, "getFutureWeekStarts length");
-    const expectedFirst = startOfNextWeek(new Date("2025-08-29T00:00:00Z"));
-    console.assert(fs[0].getTime() === expectedFirst.getTime(), "getFutureWeekStarts[0] is next Monday");
-
-    // 6) getWeeksFrom anchored window
     const base = new Date("2025-09-29T00:00:00Z"); // Monday
     const win = getWeeksFrom(base, 4);
     console.assert(win[0].getDate() === 29 && win[0].getMonth() === 8, "window[0] should equal selected start (Sep 29)");
     console.assert(win[1].getDate() === 6 && win[1].getMonth() === 9, "window[1] should be Oct 6");
 
+    console.assert(STATUS_LABEL.YES === "\u2705" && STATUS_LABEL.TBD === "\u2753" && STATUS_LABEL.NO === "\u274C", "STATUS_LABEL baseline");
   } catch (err) {
     // Never throw in production; just log. These are smoke tests.
     console.warn("App tests encountered an error:", err);
